@@ -1,0 +1,583 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Mario Kart MultiView Sync v8</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, -apple-system, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #0b1020; color: #e9eefb; }
+    header, .controls, .inputs { padding: 12px 18px; background: #151e32; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    h1 { font-size: 18px; margin: 0; }
+    button, input, select { font: inherit; }
+    button { background: #416de5; color: white; border: 0; border-radius: 7px; padding: 9px 12px; cursor: pointer; }
+    button:hover:not(:disabled) { filter: brightness(1.13); }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    button.secondary { background: #34415b; }
+    input { background: #0e1629; border: 1px solid #526079; border-radius: 6px; color: white; padding: 8px; min-width: 0; }
+    input:focus-visible, button:focus-visible, select:focus-visible { outline: 2px solid #a6c3ff; outline-offset: 2px; }
+    .inputs { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr)); gap: 9px; }
+    .entry { display: grid; grid-template-columns: minmax(0, 1fr) 96px; gap: 6px; }
+    .entry label { grid-column: 1 / -1; font-size: 12px; color: #b9c7e2; }
+    .entry input { width: 100%; }
+    .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .controls input[type="range"] { flex: 1; min-width: 130px; }
+    .time, .current { font-variant-numeric: tabular-nums; }
+    #syncMode { font-size: 12px; color: #c9ddff; border: 1px solid #526079; padding: 6px 9px; border-radius: 7px; white-space: nowrap; }
+    .time { font-size: 13px; }
+    select { background: #34415b; color: #fff; padding: 8px; border: 0; border-radius: 6px; }
+    #status { font-size: 12px; color: #f3cf8a; flex-basis: 100%; min-height: 1.3em; }
+    .layout { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; padding: 9px; align-content: center; min-height: 50vh; }
+    .tile { position: relative; background: #000; aspect-ratio: 16 / 9; margin-bottom: 43px; }
+    .player-shell { position: absolute; inset: 0; overflow: hidden; }
+    .player-shell iframe { width: 100%; height: 100%; }
+    .tile-info { position: absolute; top: 100%; left: 0; right: 0; min-height: 40px; background: #1c2942; display: flex; align-items: center; gap: 5px; padding: 4px 6px; overflow-x: auto; white-space: nowrap; }
+    .tile-info .current { font-size: 12px; margin-right: auto; }
+    .tile-info button { padding: 5px 7px; font-size: 11px; background: #344b70; flex-shrink: 0; }
+    .tile-info .caption-off { background: #596482; }
+    .empty { border: 1px dashed #41516c; background: #11192a; }
+    .note { font-size: 12px; color: #b9c7e2; padding: 0 18px 12px; line-height: 1.65; }
+    body.two .layout { grid-template-columns: 1fr; max-width: min(100vw, 1100px); margin: auto; }
+    body.two .tile { max-height: calc(50vh - 10px); width: min(100%, calc((50vh - 10px) * 16 / 9)); margin: 0 auto 43px; }
+    body.obs header, body.obs .inputs, body.obs .controls, body.obs .note, body.obs .tile-info { display: none; }
+    body.obs .layout { min-height: 100vh; height: 100vh; padding: 4px; gap: 4px; }
+    body.obs .tile { margin-bottom: 0; align-self: center; }
+    body.two.obs .layout { height: 100vh; }
+    body.two.obs .tile { margin-bottom: 0; max-height: calc(50vh - 8px); width: min(100%, calc((50vh - 8px) * 16 / 9)); }
+    @media (max-width: 760px) {
+      body:not(.obs):not(.two) .layout { grid-template-columns: 1fr; }
+      body:not(.obs) .empty { display: none; }
+    }
+    @media (max-width: 600px) {
+      .controls, .inputs { padding: 9px; }
+      .layout { gap: 4px; padding: 4px; }
+      .tile { margin-bottom: 43px; }
+      .tile-info button { padding: 5px 6px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Mario Kart MultiView Sync <small>v8</small></h1>
+    <button type="button" id="obsBtn" class="secondary" aria-pressed="false">OBSモード</button>
+  </header>
+  <section class="inputs" id="inputs" aria-label="動画と同期開始時刻"></section>
+  <section class="controls" aria-label="全体操作">
+    <button type="button" id="load">動画を読み込む</button>
+    <button type="button" id="play" data-needs-ready disabled>再生</button>
+    <button type="button" id="pause" class="secondary" data-needs-ready disabled>一時停止</button>
+    <button type="button" id="back" class="secondary" data-needs-ready disabled>−10秒</button>
+    <button type="button" id="forward" class="secondary" data-needs-ready disabled>＋10秒</button>
+    <input id="seek" type="range" min="0" max="100" step="0.1" value="0" aria-label="同期開始からの再生位置" disabled>
+    <span id="clock" class="time">0:00</span>
+    <label>速度 <select id="speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option></select></label>
+    <label>音声 <select id="audio"><option value="-1">なし</option><option value="0" selected>①</option><option value="1">②</option><option value="2">③</option><option value="3">④</option></select></label>
+    <button type="button" id="capture" class="secondary" data-needs-ready disabled>現在位置を同期基準に登録</button>
+    <button type="button" id="sync" class="secondary" data-needs-ready disabled>再同期</button>
+    <button type="button" id="manual" class="secondary" data-needs-ready disabled>個別操作モード</button>
+    <span id="syncMode" aria-live="polite">自動同期 OFF</span>
+    <button type="button" id="share" class="secondary">設定リンクをコピー</button>
+    <span id="status" role="status" aria-live="polite">YouTube APIを読み込み中…</span>
+  </section>
+  <main class="layout" id="layout" aria-label="マルチビュー"></main>
+  <p class="note">
+    URLを2〜4本入力。開始時刻には同じ瞬間が映る各動画の時刻を入力（例 12:30.5）。
+    手動で映像を揃えたら「現在位置を同期基準に登録」を押してから再生。±ボタンで各視点を微調整できます。
+    YouTubeの操作バーからの再生・停止は各視点だけに作用します。ページ上部の再生・一時停止・シーク・再同期は全視点に作用します。
+    上部の「再生」で自動同期がONになり、個別の再生・停止や大きなシークを検出するとOFFになります。
+    小さなシークは検出できないことがあるため、個別に動かしたいときは先に「個別操作モード」を押すと確実です。上部の「再生」で再び全視点を揃えます。
+    同期の時刻基準は一番上の視点です。
+    「字幕OFFを試す」はYouTubeの非保証APIを利用するため、効かない動画があります。
+    OBSモードは Esc キーで解除。設定はこのブラウザーに保存され、共有リンクは自分でコピーしたときだけ作成されます。
+  </p>
+
+  <script>
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const storageKey = 'mk-multiview-settings-v2'; // v3〜v6の保存データをそのまま使う
+  const state = {
+    players: [], entries: [], offsets: [], ready: new Set(), loaded: false,
+    playing: false, groupSync: false, seeking: false, duration: 0, generation: 0,
+    syncHoldUntil: 0, lastCorrection: [], expectedPlaying: [],
+    lastPlaybackState: [], lastObserved: [], ignoreJumpsUntil: []
+  };
+  let apiReady = false;
+
+  function status(message) { $('status').textContent = message; }
+  function available() { return state.loaded && state.entries.length > 0 && state.ready.size === state.entries.length; }
+  function setReadyControls() {
+    const ready = available();
+    document.querySelectorAll('[data-needs-ready]').forEach(b => { b.disabled = !ready; });
+    $('seek').disabled = !ready;
+  }
+  function roundTenth(n) { return Math.round(n * 10) / 10; }
+  function formatTime(time, decimals = false) {
+    if (!Number.isFinite(time)) return '--:--';
+    const ticks = Math.max(0, Math.round(time * 10));
+    const whole = Math.floor(ticks / 10), dec = ticks % 10;
+    const hours = Math.floor(whole / 3600), minutes = Math.floor(whole % 3600 / 60), seconds = whole % 60;
+    const base = (hours ? `${hours}:${String(minutes).padStart(2, '0')}` : `${minutes}`) + `:${String(seconds).padStart(2, '0')}`;
+    return base + (decimals ? `.${dec}` : '');
+  }
+  function formatInput(time) {
+    const s = formatTime(time, true);
+    return s.endsWith('.0') ? s.slice(0, -2) : s;
+  }
+  function parseTime(s) {
+    if (typeof s !== 'string' || !/^\d+(?::\d+){0,2}(?:\.\d+)?$/.test(s.trim())) return NaN;
+    const parts = s.trim().split(':').map(Number);
+    if (parts.some(n => !Number.isFinite(n) || n < 0)) return NaN;
+    if (parts.length > 1 && parts.at(-1) >= 60) return NaN;
+    if (parts.length === 3 && parts[1] >= 60) return NaN;
+    const time = parts.reduce((a, b) => a * 60 + b, 0);
+    return time <= 360000 ? time : NaN;
+  }
+  function getVideoId(text) {
+    try {
+      const u = new URL(text.trim());
+      if (!['http:', 'https:'].includes(u.protocol)) return null;
+      const host = u.hostname.toLowerCase().replace(/^www\./, '');
+      let id = null;
+      if (host === 'youtu.be') id = u.pathname.slice(1).split('/')[0];
+      else if (['youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtube-nocookie.com'].includes(host)) {
+        if (u.pathname === '/watch') id = u.searchParams.get('v');
+        else id = u.pathname.match(/^\/(?:live|shorts|embed)\/([^/]+)/)?.[1];
+      }
+      return /^[A-Za-z0-9_-]{11}$/.test(id || '') ? id : null;
+    } catch { return null; }
+  }
+  function saveSettings() {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify({
+        urls: Array.from({length: 4}, (_, i) => $(`url${i}`).value),
+        offsets: Array.from({length: 4}, (_, i) => $(`offset${i}`).value),
+        audio: $('audio').value, speed: $('speed').value
+      }));
+    } catch { /* プライベートブラウズ等では保存しない */ }
+  }
+  function restoreSettings() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
+      if (saved) {
+        for (let i = 0; i < 4; i++) {
+          $(`url${i}`).value = saved.urls?.[i] || '';
+          $(`offset${i}`).value = saved.offsets?.[i] || '0:00';
+        }
+        if (saved.audio !== undefined && [...$('audio').options].some(o => o.value === String(saved.audio))) $('audio').value = saved.audio;
+        if (saved.speed && [...$('speed').options].some(o => o.value === String(saved.speed))) $('speed').value = saved.speed;
+      }
+    } catch { /* 不正な保存データを無視 */ }
+    // URLに共有用設定があれば、このブラウザーの保存設定より優先する。
+    const params = new URLSearchParams(location.search);
+    if (params.has('v0') || params.has('v1') || params.has('v2') || params.has('v3')) {
+      for (let i = 0; i < 4; i++) {
+        const id = params.get(`v${i}`) || '';
+        $(`url${i}`).value = /^[A-Za-z0-9_-]{11}$/.test(id) ? `https://www.youtube.com/watch?v=${id}` : '';
+        const t = params.get(`t${i}`) || '0:00';
+        $(`offset${i}`).value = Number.isFinite(parseTime(t)) ? t : '0:00';
+      }
+      const a = params.get('a'), sp = params.get('s');
+      if (a !== null && [...$('audio').options].some(o => o.value === a)) $('audio').value = a;
+      if (sp !== null && [...$('speed').options].some(o => o.value === sp)) $('speed').value = sp;
+      status('共有された設定を読み込んだよ。「動画を読み込む」を押してね');
+    }
+  }
+  function readEntries() {
+    const entries = [];
+    for (let i = 0; i < 4; i++) {
+      const url = $(`url${i}`).value.trim();
+      if (!url) continue;
+      const id = getVideoId(url), offset = parseTime($(`offset${i}`).value);
+      if (!id || !Number.isFinite(offset)) {
+        status(`視点${i + 1}：YouTubeのURLまたは時刻を確認してね`);
+        return null;
+      }
+      entries.push({ index: i, id, offset });
+    }
+    if (entries.length < 2) { status('YouTubeのURLを2〜4本入力してね'); return null; }
+    return entries;
+  }
+
+  for (let i = 0; i < 4; i++) {
+    const item = document.createElement('div');
+    item.className = 'entry';
+    item.innerHTML = `<label for="url${i}">視点${i+1} URL / 同期開始時刻</label><input id="url${i}" type="url" placeholder="https://www.youtube.com/watch?v=..." autocomplete="off"><input id="offset${i}" aria-label="視点${i+1} 同期開始時刻" value="0:00" placeholder="12:30.5" inputmode="decimal">`;
+    $('inputs').append(item);
+  }
+  restoreSettings();
+  $('inputs').addEventListener('change', saveSettings);
+  const tag = document.createElement('script');
+  tag.src = 'https://www.youtube.com/iframe_api';
+  tag.onerror = () => status('YouTube APIを読み込めなかったよ。通信とブラウザーの設定を確認してね');
+  document.head.append(tag);
+  window.onYouTubeIframeAPIReady = () => { apiReady = true; if (!location.search) status('準備完了。動画URLを入力してね'); };
+
+  function currentTime(p) {
+    try { const t = p.getCurrentTime(); return Number.isFinite(t) ? t : NaN; }
+    catch { return NaN; }
+  }
+  function syncPosition() {
+    if (!available()) return 0;
+    const t = currentTime(state.players[0]) - state.offsets[0];
+    return Number.isFinite(t) ? Math.max(0, t) : 0;
+  }
+  function refreshTimes() {
+    state.players.forEach((p, i) => {
+      const el = $(`current${i}`);
+      if (el) el.textContent = `視点${state.entries[i].index + 1}  ${formatTime(currentTime(p), true)}`;
+    });
+  }
+  function applyAudio() {
+    if (!available()) return;
+    const chosenView = Number($('audio').value); // 0〜3 は入力欄の視点番号
+    state.players.forEach((p, i) => {
+      try { if (state.entries[i].index === chosenView) p.unMute(); else p.mute(); } catch {}
+    });
+  }
+  function applySpeed() {
+    if (!available()) return;
+    const speed = Number($('speed').value);
+    state.players.forEach(p => { try { p.setPlaybackRate(speed); } catch {} });
+  }
+  // YouTube内の操作は各プレイヤーで独立。全体同期は上部の操作でのみ開始する。
+  function renderSyncMode() {
+    $('syncMode').textContent = state.groupSync ? '自動同期 ON' : '自動同期 OFF';
+    $('manual').disabled = !available() || !state.groupSync;
+  }
+  function enterManual(message) {
+    state.groupSync = false;
+    state.playing = false;
+    state.expectedPlaying.fill(0);
+    renderSyncMode();
+    if (message) status(message);
+    // ここではpauseVideo()を呼ばない。他の動画を一切操作しない。
+  }
+  function markExpectedPlaying(i) {
+    state.expectedPlaying[i] = Date.now() + 6000;
+  }
+  function recordSeek(i, target) {
+    state.ignoreJumpsUntil[i] = Date.now() + 3500;
+    state.lastObserved[i] = {time: target, at: Date.now(), playing: state.playing};
+  }
+  function pauseAll() {
+    if (!available()) return;
+    enterManual();
+    state.players.forEach(p => { try { p.pauseVideo(); } catch {} });
+    status('全視点を一時停止したよ');
+  }
+  function playAll() {
+    if (!available()) return;
+    // 上部の全体再生は、独立して動かした後でも先頭の現在位置を基準に揃え直す。
+    const timeline = syncPosition();
+    state.groupSync = true;
+    state.playing = true;
+    state.syncHoldUntil = Date.now() + 3500;
+    state.lastCorrection = state.players.map(() => Date.now());
+    renderSyncMode();
+    applyAudio();
+    state.players.forEach((p, i) => {
+      const target = Math.max(0, timeline + state.offsets[i]);
+      markExpectedPlaying(i);
+      recordSeek(i, target);
+      try { p.seekTo(target, true); p.playVideo(); } catch {}
+    });
+    status('全視点を揃えて再生中。動画を個別操作すると自動同期をOFFにするよ');
+  }
+  function seekAll(time) {
+    if (!available()) return;
+    const target = Math.max(0, Number(time) || 0);
+    state.syncHoldUntil = Date.now() + 3000;
+    state.players.forEach((p, i) => {
+      const playerTime = target + state.offsets[i];
+      const wasPaused = (() => { try { return p.getPlayerState() !== YT.PlayerState.PLAYING; } catch { return true; } })();
+      recordSeek(i, playerTime);
+      try {
+        p.seekTo(playerTime, true);
+        // グループ外での全体シークは各視点の再生/停止状態を維持する。
+        if (wasPaused) p.pauseVideo();
+      } catch {}
+    });
+    $('clock').textContent = formatTime(target, true);
+    refreshTimes();
+  }
+  function capture() {
+    if (!available()) return;
+    pauseAll();
+    const times = state.players.map(currentTime);
+    if (times.some(t => !Number.isFinite(t))) { status('時刻が取得できなかったよ。読み込みを待って再試行してね'); return; }
+    state.offsets = times.map(roundTenth);
+    state.offsets.forEach((offset, i) => { $(`offset${state.entries[i].index}`).value = formatInput(offset); });
+    state.syncHoldUntil = Date.now() + 3000;
+    state.players.forEach((p, i) => recordSeek(i, times[i]));
+    saveSettings();
+    $('seek').value = 0;
+    $('clock').textContent = '0:00.0';
+    updateDuration();
+    refreshTimes();
+    status('現在の各動画の位置を同期基準として保存したよ。再生を押してね');
+  }
+  function adjust(i, delta) {
+    if (!available()) return;
+    const timeline = syncPosition();
+    const old = state.offsets[i];
+    const next = Math.max(0, roundTenth(old + delta));
+    if (next === old) { status('これ以上前には戻せないよ'); return; }
+    state.offsets[i] = next;
+    $(`offset${state.entries[i].index}`).value = formatInput(next);
+    state.syncHoldUntil = Date.now() + 3000;
+    try {
+      const wasPaused = state.players[i].getPlayerState() !== YT.PlayerState.PLAYING;
+      recordSeek(i, timeline + next);
+      state.players[i].seekTo(timeline + next, true);
+      if (wasPaused) state.players[i].pauseVideo();
+    } catch {}
+    updateDuration();
+    saveSettings();
+    refreshTimes();
+    status(`視点${state.entries[i].index + 1}を${delta > 0 ? '+' : ''}${delta}秒調整したよ`);
+  }
+  function updateDuration() {
+    if (!available()) return;
+    const remains = state.players.map((p, i) => {
+      try { return p.getDuration() - state.offsets[i]; } catch { return 0; }
+    }).filter(t => Number.isFinite(t) && t > 0);
+    if (remains.length) {
+      state.duration = Math.max(.1, Math.min(...remains));
+      $('seek').max = String(roundTenth(state.duration));
+    }
+  }
+  // YouTube公式IFrame APIの字幕設定には「OFF」がなく、以下は非保証の試行。
+  // 成功したとは表示しない。連続実行もしない（以前のv6の重複処理を整理）。
+  function tryCaptionOff(i, report = true) {
+    const player = state.players[i];
+    if (!player || !state.ready.has(i)) return;
+    try { if (typeof player.setOption === 'function') player.setOption('captions', 'track', {}); } catch {}
+    try { if (typeof player.unloadModule === 'function') player.unloadModule('captions'); } catch {}
+    if (report) status(`視点${state.entries[i].index+1}に字幕OFFを要求したよ。効いたか映像で確認してね`);
+  }
+  function buildTile(entry, i) {
+    const tile = document.createElement('section');
+    tile.className = 'tile';
+    tile.setAttribute('aria-label', `視点${entry.index+1}`);
+    const shell = document.createElement('div');
+    shell.className = 'player-shell';
+    const holder = document.createElement('div');
+    holder.id = `player${i}`;
+    shell.append(holder);
+    tile.append(shell);
+    const info = document.createElement('div');
+    info.className = 'tile-info';
+    const label = document.createElement('span');
+    label.className = 'current'; label.id = `current${i}`;
+    label.textContent = `視点${entry.index+1} --:--`;
+    info.append(label);
+    for (const delta of [-0.5, -0.1, 0.1, 0.5]) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = `${delta > 0 ? '+' : '−'}${Math.abs(delta)}秒`;
+      button.title = `視点${entry.index+1}を${delta}秒調整`;
+      button.addEventListener('click', () => adjust(i, delta));
+      info.append(button);
+    }
+    const caption = document.createElement('button');
+    caption.type = 'button'; caption.className = 'caption-off';
+    caption.textContent = '字幕OFFを試す';
+    caption.title = 'YouTubeの仕様により動作しない場合があります';
+    caption.addEventListener('click', () => tryCaptionOff(i));
+    info.append(caption);
+    tile.append(info);
+    return tile;
+  }
+  function loadVideos() {
+    if (!apiReady) { status('YouTube API読み込み中。数秒後に試してね'); return; }
+    const entries = readEntries();
+    if (!entries) return;
+    ++state.generation;
+    const generation = state.generation;
+    state.players.forEach(p => { try { p.destroy(); } catch {} });
+    state.players = [];
+    state.entries = entries;
+    state.offsets = entries.map(e => e.offset);
+    state.ready = new Set();
+    state.loaded = true;
+    state.playing = false;
+    state.groupSync = false;
+    state.duration = 0;
+    state.syncHoldUntil = Date.now() + 3000;
+    state.lastCorrection = entries.map(() => 0);
+    state.expectedPlaying = entries.map(() => 0);
+    state.lastPlaybackState = entries.map(() => YT.PlayerState.PAUSED);
+    state.lastObserved = entries.map(() => null);
+    state.ignoreJumpsUntil = entries.map(() => 0);
+    renderSyncMode();
+    $('seek').value = 0; $('seek').max = 100;
+    $('clock').textContent = '0:00';
+    setReadyControls();
+    saveSettings();
+    $('layout').replaceChildren();
+    document.body.classList.toggle('two', entries.length === 2);
+    entries.forEach((entry, i) => $('layout').append(buildTile(entry, i)));
+    if (entries.length === 3) {
+      const blank = document.createElement('div'); blank.className = 'tile empty';
+      blank.setAttribute('aria-hidden', 'true'); $('layout').append(blank);
+    }
+    const selected = Number($('audio').value);
+    if (selected !== -1 && !entries.some(e => e.index === selected)) {
+      $('audio').value = String(entries[0].index);
+      saveSettings();
+    }
+    status(`動画を読み込み中…（0/${entries.length}）`);
+    entries.forEach((entry, i) => {
+      state.players[i] = new YT.Player(`player${i}`, {
+        videoId: entry.id,
+        playerVars: {
+          playsinline: 1, controls: 1, rel: 0,
+          ...(location.origin !== 'null' ? { origin: location.origin } : {})
+        },
+        events: {
+          onReady(ev) {
+            if (generation !== state.generation || state.ready.has(i)) return;
+            state.ready.add(i);
+            try {
+              ev.target.mute(); ev.target.pauseVideo();
+              ev.target.seekTo(entry.offset, true);
+              recordSeek(i, entry.offset);
+            } catch {}
+            if (available()) {
+              applyAudio(); applySpeed(); updateDuration();
+              setReadyControls(); renderSyncMode(); refreshTimes();
+              status('準備完了！ 上部の再生で全体同期、各動画の操作バーでは個別操作できるよ');
+            } else status(`動画を読み込み中…（${state.ready.size}/${entries.length}）`);
+          },
+          onStateChange(ev) {
+            if (generation !== state.generation || !available()) return;
+            const data = ev.data;
+            if (data !== YT.PlayerState.PLAYING && data !== YT.PlayerState.PAUSED) return;
+            const previous = state.lastPlaybackState[i];
+            state.lastPlaybackState[i] = data;
+            if (data === YT.PlayerState.PLAYING && Date.now() < state.expectedPlaying[i]) {
+              state.expectedPlaying[i] = 0;
+              return; // 上部の「全体再生」から届いたイベント
+            }
+            if (!state.groupSync) return; // 個別操作モードなら他の視点に触れない
+            if (data === YT.PlayerState.PLAYING && previous === YT.PlayerState.PLAYING) {
+              return; // バッファリングから元の再生状態に戻っただけ
+            }
+            enterManual(`視点${entry.index+1}を個別操作したので自動同期をOFFにしたよ。他の視点はそのままです`);
+          },
+          onError(ev) {
+            if (generation === state.generation) {
+              if (state.groupSync) enterManual();
+              status(`視点${entry.index+1}を再生できません（エラー${ev.data}）。埋め込み制限などを確認してね`);
+            }
+          },
+          onAutoplayBlocked() {
+            if (generation === state.generation) {
+              if (state.groupSync) enterManual();
+              status('ブラウザーが再生をブロックしたよ。動画上の再生ボタンも試してね');
+            }
+          }
+        }
+      });
+    });
+  }
+  async function copyShareLink() {
+    const entries = readEntries();
+    if (!entries) return;
+    const u = new URL(location.href);
+    u.hash = ''; u.search = '';
+    entries.forEach(e => {
+      u.searchParams.set(`v${e.index}`, e.id);
+      u.searchParams.set(`t${e.index}`, $(`offset${e.index}`).value.trim());
+    });
+    u.searchParams.set('a', $('audio').value);
+    u.searchParams.set('s', $('speed').value);
+    try {
+      await navigator.clipboard.writeText(u.toString());
+      status('設定リンクをコピーしたよ。友達に送れるよ（動画は自動再生しません）');
+    } catch {
+      window.prompt('このURLをコピーしてね', u.toString());
+    }
+  }
+
+  $('load').addEventListener('click', loadVideos);
+  $('play').addEventListener('click', playAll);
+  $('pause').addEventListener('click', pauseAll);
+  $('back').addEventListener('click', () => seekAll(syncPosition() - 10));
+  $('forward').addEventListener('click', () => seekAll(syncPosition() + 10));
+  $('capture').addEventListener('click', capture);
+  $('sync').addEventListener('click', () => { seekAll(syncPosition()); status('保存された同期基準に揃え直したよ（再生状態はそのまま）'); });
+  $('manual').addEventListener('click', () => enterManual('個別操作モードに切り替えたよ。YouTubeの操作バーで各視点を自由に操作できるよ')); 
+  $('share').addEventListener('click', copyShareLink);
+  $('audio').addEventListener('change', () => { applyAudio(); saveSettings(); });
+  $('speed').addEventListener('change', () => { applySpeed(); saveSettings(); });
+  $('seek').addEventListener('input', () => {
+    state.seeking = true;
+    $('clock').textContent = formatTime(Number($('seek').value), true);
+  });
+  $('seek').addEventListener('change', () => {
+    seekAll(Number($('seek').value)); state.seeking = false;
+  });
+  $('obsBtn').addEventListener('click', () => {
+    const on = document.body.classList.toggle('obs');
+    $('obsBtn').setAttribute('aria-pressed', String(on));
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      document.body.classList.remove('obs');
+      $('obsBtn').setAttribute('aria-pressed', 'false');
+    }
+  });
+
+  // APIはサブ秒単位の同期精度を保証しない。個別操作の検出後は自動補正しない。
+  let lastDurationCheck = 0;
+  setInterval(() => {
+    if (!available() || state.seeking) return;
+    refreshTimes();
+    const t = syncPosition();
+    $('seek').value = String(t);
+    $('clock').textContent = formatTime(t, true);
+    const now = Date.now();
+    if (now - lastDurationCheck >= 5000) { lastDurationCheck = now; updateDuration(); }
+
+    // IFrame APIには個別シークイベントがない。再生位置の大きな不連続を検出して独立モードへ。
+    let manuallySeeked = -1;
+    state.players.forEach((p, i) => {
+      const position = currentTime(p), previous = state.lastObserved[i];
+      let playerState = null;
+      try { playerState = p.getPlayerState(); } catch {}
+      if (Number.isFinite(position) && previous && state.groupSync && now > state.ignoreJumpsUntil[i]) {
+        const elapsed = Math.min(2, Math.max(0, (now - previous.at) / 1000));
+        const expected = previous.playing ? elapsed * Number($('speed').value) : 0;
+        if (Math.abs((position - previous.time) - expected) > 1.4) manuallySeeked = i;
+      }
+      state.lastObserved[i] = Number.isFinite(position) ? {
+        time: position, at: now, playing: playerState === YT.PlayerState.PLAYING
+      } : null;
+    });
+    if (manuallySeeked >= 0) {
+      enterManual(`視点${state.entries[manuallySeeked].index+1}の個別シークを検出したので自動同期をOFFにしたよ`);
+    }
+    if (!state.groupSync || now < state.syncHoldUntil) return;
+    try { if (state.players[0].getPlayerState() !== YT.PlayerState.PLAYING) return; }
+    catch { return; }
+    for (let i = 1; i < state.players.length; i++) {
+      try {
+        if (state.players[i].getPlayerState() !== YT.PlayerState.PLAYING) continue;
+        if (now - state.lastCorrection[i] < 4500) continue;
+        const actual = currentTime(state.players[i]) - state.offsets[i];
+        if (Number.isFinite(actual) && Math.abs(actual - t) > 0.9) {
+          const target = t + state.offsets[i];
+          recordSeek(i, target);
+          state.players[i].seekTo(target, true);
+          state.lastCorrection[i] = now;
+        }
+      } catch {}
+    }
+  }, 500);
+  </script>
+</body>
+</html>
